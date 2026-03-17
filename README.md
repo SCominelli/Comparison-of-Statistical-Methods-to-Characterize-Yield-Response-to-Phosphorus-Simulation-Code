@@ -19,6 +19,9 @@ This repository contains R code used for a simulation study comparing statistica
 
 The goal is to compare how well different methods identify responsive and non-responsive site-years under controlled simulation settings.
 
+## Language
+
+- R
 
 ## Output
 
