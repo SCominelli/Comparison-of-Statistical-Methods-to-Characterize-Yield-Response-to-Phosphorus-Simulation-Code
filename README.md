@@ -5,7 +5,9 @@ This repository contains R code used for a simulation study comparing statistica
 ## Methods compared
 
 - Linear-plateau
-- Linear-plateau + ANOVA
+- Linear-plateau + ANOVA-based relative yield
+- Quadratic-plateau
+- Quadratic-plateau + ANOVA-based relative yield
 - Logistic regression
 
 ## What the code does
