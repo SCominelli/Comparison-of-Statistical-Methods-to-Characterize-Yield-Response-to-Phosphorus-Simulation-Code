@@ -25,33 +25,39 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Introduction
-This appendix documents the code and workflow used for the simulation study described in the main manuscript. The objective of the simulation study was to evaluate and compare the predictive performance of three methods for classifying phosphorus (P) responsiveness from soil test phosphorus (STP): (i) a linear-plateau model fitted to relative yield, (ii) a linear-plateau model fitted to relative yield after an ANOVA-based screening step that identifies non-responsive site-years and sets their relative yield to 100%, and (iii) a logistic regression model that predicts the probability of responsiveness from STP using a binary site-year label.
 
-A simulation study is a helpful tool to evaluate, compare, and characterize properties like bias and accuracy
-of a statistical method. In general, they involve three main stages: data generation, model fitting, and evaluation. First, data are simulated from predefined parameter values. Next, the methods of interest are fitted to the simulated data. Finally, the resulting estimates or classifications are compared with the known reference values. This framework allows direct assessment of method performance, including measures such as accuracy and precision.
+This appendix documents the code and workflow used for the simulation study described in the main manuscript. The objective of the simulation study was to evaluate and compare the out-of-sample classification performance of five statistical methods for characterizing phosphorus (P) responsiveness from soil test phosphorus (STP): i) linear-plateau, ii) linear-plateau with ANOVA-based relative yield adjustment, iii) quadratic-plateau, iv) quadratic-plateau with ANOVA-based relative yield adjustment, and v) logistic regression.
 
-In this study, the simulation framework was used to compare the statistical performance of the three candidate methods for classifying site responsiveness to P as responsive or non-responsive. Because the true simulated classification was known, the methods could be compared directly using binary classification metrics. This approach allowed us to assess whether the linear-plateau-based methods remained reliable for this purpose or whether an alternative method, such as logistic regression, provided better classification performance.
+The simulation workflow was organized into three major steps: data simulation, model fitting, and evaluation. In the data simulation step, synthetic wheat yield observations were generated from an empirically informed environment matrix derived from historical Kansas wheat P fertilization trials. In the model fitting step, the five candidate methods were fitted using the training portion of each simulated dataset. In the evaluation step, predicted classifications from each fitted method were compared with an AIC-based reference responsiveness classification in the testing data.
 
-The simulation study was organized into four steps: (a) definition of reference simulation gold standards, (b) generation of simulated yield data based on those gold standards, (c) model fitting and site classification, and (d) evaluation and comparison of method performance. Reference values were derived from 46 wheat site-years for which STP and site-specific response parameters were available. Simulated datasets were then generated under scenarios that varied in the number of site-years and fertilizer rate levels, and each scenario was repeated over 1,000 iterations.
+The reference responsiveness classification was determined within each simulated dataset by comparing an intercept-only model with a slope-intercept model for each simulated site-year. The intercept-only model represented no yield response to P fertilizer rate, whereas the slope-intercept model represented yield change as a function of P fertilizer rate. The slope-intercept model was considered to provide better support for responsiveness when it improved AIC relative to the intercept-only model by more than the selected delta AIC criterion. This binary reference classification was used only for simulation evaluation and provided the known benchmark against which candidate methods were compared.
 
 For each simulation iteration, the script:
 
-1. Samples site-years from an input matrix of environment parameters.
+1. Samples site-years from the empirical environment matrix.
 
-2. Simulates yield observations across P fertilizer rates and replicates.
+2. Generates synthetic yield observations across P fertilizer rates and replicates.
 
-3. Splits site-years into training and testing sets (by environment ID).
+3. Splits site-years into training and testing sets at the environment level to avoid data leakage.
 
-4. Trains three approaches using training data only:
-  - Linear-plateau
-  - Linear-plateau + ANOVA
-  - Logistic regression predicting responsiveness from soil test P (STP), using delta AIC as the reference label
+4. Fits five candidate methods using the training data only:
 
-5. Applies trained models to the testing set and compares predictions against AIC-based classification rule.
+   * Linear-plateau
+   * Linear-plateau + ANOVA-based relative yield adjustment
+   * Quadratic-plateau
+   * Quadratic-plateau + ANOVA-based relative yield adjustment
+   * Logistic regression
 
-6. Stores confusion matrix components across simulations.
+5. Applies the fitted methods to testing site-years.
 
-7. Summarizes and visualizes accuracy distributions
+6. Compares predicted classifications with the AIC-based reference classification.
+
+7. Stores confusion matrix components for each method and simulation iteration.
+
+8. Computes classification performance metrics, including accuracy, precision, sensitivity, and specificity.
+
+9. Summarizes and visualizes method performance across simulation scenarios.
+
 
 ## Libraries
 
@@ -144,6 +150,8 @@ Experimental design implemented in the simulation
 - `n_fert = 4` fertilizer rate levels, equally spaced from 0 to 135 $kg P ha^{-1}$
 - `n_rep = 3` replicates per fertilizer rate level
 
+
+The chunk below shows one scenario. The complete simulation was repeated across all combinations of site-year number and P fertilizer rate number by changing sample_size and n_fert according to the scenario grid.
 ```{r}
 # Number of iterations
 n_sims <- 1000
@@ -172,12 +180,20 @@ Each confusion matrix stores confusion components for a given method, across sim
 - FNeg: false negatives
 
 ```{r}
-res_CM_RYraw   <- matrix(nrow = n_sims, ncol = 4);
-colnames(res_CM_RYraw)   <- c("TPos","TNeg","FPos","FNeg")
-res_CM_RYANOVA <- matrix(nrow = n_sims, ncol = 4);
+res_CM_RYraw   <- matrix(nrow = n_sims, ncol = 4)
+colnames(res_CM_RYraw) <- c("TPos","TNeg","FPos","FNeg")
+
+res_CM_RYANOVA <- matrix(nrow = n_sims, ncol = 4)
 colnames(res_CM_RYANOVA) <- c("TPos","TNeg","FPos","FNeg")
-res_CM_logis   <- matrix(nrow = n_sims, ncol = 4);
-colnames(res_CM_logis)   <- c("TPos","TNeg","FPos","FNeg")
+
+res_CM_QPraw   <- matrix(nrow = n_sims, ncol = 4)
+colnames(res_CM_QPraw) <- c("TPos","TNeg","FPos","FNeg")
+
+res_CM_QPANOVA <- matrix(nrow = n_sims, ncol = 4)
+colnames(res_CM_QPANOVA) <- c("TPos","TNeg","FPos","FNeg")
+
+res_CM_logis   <- matrix(nrow = n_sims, ncol = 4)
+colnames(res_CM_logis) <- c("TPos","TNeg","FPos","FNeg")
 ```
 
 
@@ -198,7 +214,7 @@ Example of simulation 1, 10 site-years and 4 P rates:
 set.seed(456)
 for (i in seq_len(n_sims)) {
 
-  # Sample “gold standards”, based on real data
+  # Sample site-year from environment matrix (real data step)
   select_sites <- sample(1:nrow(env_matrix), size = 15, replace = TRUE) # change size with 
   env.temp <- env_matrix[select_sites, ] %>% 
   rename(env_ID.orgi = env_ID) %>% 
@@ -208,10 +224,17 @@ for (i in seq_len(n_sims)) {
 
   n_sites <- n_distinct(env.temp$env_ID)
 
-  # Data simulation based on the “gold standards”
+  # Data simulation based on the site-year information
   # Assigns fertilizer rate and replicate identifiers
   # Computes the expected yield mean mu under a linear-plateau response to fertilizer
   # Adds random normal noise with sd to generate the observed yield 
+  
+  # Note:
+  # Fertilizer rates were defined in lb P ac^-1 in the original code
+  # For reporting in the manuscript, rates were converted to kg P ha^-1.
+  # Conversion: 1 lb ac^-1 = 1.12085 kg ha^-1.
+  # Therefore, 120 lb P ac^-1 is approximately 135 kg P ha^-1.
+  
  df.temp <- purrr::map_dfr(seq_len(n_fert*n_rep), ~env.temp) %>% 
   mutate(Pfert = rep(rep(seq(0, 120, length.out = n_fert), each = n_sites), each = n_rep), 
          rep = rep(1:n_rep, each = n_sites*n_fert)) %>% 
@@ -232,7 +255,8 @@ for (i in seq_len(n_sims)) {
   # TRAINING PHASE 
   
   # a) Linear-plateau
-  # # RY (relative yield) = (control yield at Pfert = 0) / (maximum mean yield across Pfert levels) * 100
+  # # RY (relative yield) = (control yield at Pfert = 0) / 
+  # (maximum mean yield across Pfert levels) * 100
   df_max <- train_data %>%
     group_by(env_ID, Pfert, STP) %>%
     summarise(max_yield = mean(y), .groups = "drop") %>%
@@ -258,8 +282,28 @@ for (i in seq_len(n_sims)) {
   if (!is.null(lp_model)) {
     CSTV_lp <- coef(lp_model)["CSTV"][[1]]
     b1_lp   <- coef(lp_model)["slope"][[1]]}
+  
+  # b) Quadratic-plateau
+  # RY is modeled as a quadratic response below the CSTV and a plateau at 100 above the CSTV.
+  qp_model <- tryCatch(
+    nls(RY ~ ifelse(STP > CSTV, 100, 100 - curvature * (CSTV - STP)^2),
+        start = list(CSTV = 20, curvature = 0.05),
+        data = df_RY,
+        algorithm = "port",
+        lower = c(CSTV = 0, curvature = 0),
+        upper = c(CSTV = 100, curvature = Inf)),
+    error = function(e) NULL
+  )
 
-  # b) Linear-plateau+ ANOVA 
+  CSTV_qp <- NA_real_
+  curvature_qp <- NA_real_
+
+  if (!is.null(qp_model)) {
+    CSTV_qp <- coef(qp_model)["CSTV"][[1]]
+    curvature_qp <- coef(qp_model)["curvature"][[1]]
+  }
+
+  # c) Linear-plateau + ANOVA 
   # the ANOVA step screens site-years as responsive or non-responsive based on the
   # yield difference between minimum and maximum Pfert levels in the training data.
   p_min <- min(train_data$Pfert, na.rm = TRUE); p_max <- max(train_data$Pfert, na.rm = TRUE)
@@ -292,8 +336,29 @@ for (i in seq_len(n_sims)) {
   if (!is.null(lp_model_aov)) {
     CSTV_aov <- coef(lp_model_aov)["CSTV"][[1]]
     b1_aov   <- coef(lp_model_aov)["slope"][[1]]}
+  
+  
+  # d) Quadratic-plateau + ANOVA
+  # Uses RY corrected to 100 for site-years classified as non-responsive by ANOVA.
+  qp_model_aov <- tryCatch(
+    nls(RY_corr ~ ifelse(STP > CSTV, 100, 100 - curvature * (CSTV - STP)^2),
+        start = list(CSTV = 20, curvature = 0.05),
+        data = df_RY_aov,
+        algorithm = "port",
+        lower = c(CSTV = 0, curvature = 0),
+        upper = c(CSTV = 100, curvature = Inf)),
+    error = function(e) NULL
+  )
 
-  # c) Logistic Regression
+  CSTV_qp_aov <- NA_real_
+  curvature_qp_aov <- NA_real_
+
+  if (!is.null(qp_model_aov)) {
+    CSTV_qp_aov <- coef(qp_model_aov)["CSTV"][[1]]
+    curvature_qp_aov <- coef(qp_model_aov)["curvature"][[1]]
+  }
+  
+  # e) Logistic Regression
   # Reference responsiveness label is derived from environment specific delta AIC:
   # delta_AIC = AIC(intercept only) - AIC(slope model)
   # Binary = 1 if delta_AIC > 3, else 0
@@ -321,20 +386,35 @@ for (i in seq_len(n_sims)) {
 
   # Save training parameters
   results_list[[i]] <- tibble(
-    iter        = i,
-    CSTV_RY     = CSTV_lp,
-    b1_RY       = b1_lp,
-    CSTV_aov    = CSTV_aov,
-    b1_aov      = b1_aov,
-    beta0_logis = b0_hat,
-    beta1_logis = b1_hat,
-    prob_b0     = prob_b0,
-    prob_b1     = prob_b1)
+    iter              = i,
+    CSTV_RY           = CSTV_lp,
+    b1_RY             = b1_lp,
+    CSTV_aov          = CSTV_aov,
+    b1_aov            = b1_aov,
+    CSTV_QP           = CSTV_qp,
+    curvature_QP      = curvature_qp,
+    CSTV_QP_aov       = CSTV_qp_aov,
+    curvature_QP_aov  = curvature_qp_aov,
+    beta0_logis       = b0_hat,
+    beta1_logis       = b1_hat,
+    prob_b0           = prob_b0,
+    prob_b1           = prob_b1)
 
   
   # TESTING PHASE
   
   # Create reference label in the testing data using delta AIC
+  # Note:
+  # Reference responsiveness classification based on AIC
+  # For each simulated site-year, two models are compared:
+  #   1) Intercept-only model: yield does not change with P fertilizer rate
+  #   2) Slope-intercept model: yield changes with P fertilizer rate
+
+  # A lower AIC indicates better model fit.
+  # If the slope-intercept model reduces AIC by more than delta_aic_threshold units (3 units),
+  # the site-year is classified as responsive.
+  # Otherwise, it is classified as non-responsive.
+  
   df_AIC_test <- test_data %>%
     group_by(env_ID, STP) %>%
     nest() %>%
@@ -359,6 +439,16 @@ for (i in seq_len(n_sims)) {
   classif_RYANOVA <- test_data %>%
     mutate(classif_RYANOVA = ifelse(STP < CSTV_aov, 1, 0)) %>%
     select(env_ID, classif_RYANOVA)
+  
+  # c) Quadratic-plateau classification based on CSTV from training
+  classif_QPraw <- test_data %>%
+    mutate(classif_QPraw = ifelse(STP < CSTV_qp, 1, 0)) %>%
+    select(env_ID, classif_QPraw)
+
+  # d) Quadratic-plateau + ANOVA classification based on CSTV from training
+  classif_QPANOVA <- test_data %>%
+    mutate(classif_QPANOVA = ifelse(STP < CSTV_qp_aov, 1, 0)) %>%
+    select(env_ID, classif_QPANOVA)
 
   # c) Logistic regression classification using fitted model from training
   classif_logis <- {
@@ -373,6 +463,8 @@ for (i in seq_len(n_sims)) {
   df_compare <- df_AIC_test %>%
     left_join(classif_RYraw,   by = "env_ID") %>%
     left_join(classif_RYANOVA, by = "env_ID") %>%
+    left_join(classif_QPraw,   by = "env_ID") %>%
+    left_join(classif_QPANOVA, by = "env_ID") %>%
     left_join(classif_logis,   by = "env_ID") %>%
     rename(Binary_ref = Binary)
   
@@ -392,8 +484,26 @@ for (i in seq_len(n_sims)) {
   } else {
     res_CM_RYraw[i, ] <- c(TPos = -1, TNeg = -1, FPos = -1, FNeg = -1)
   }
+  
+  # b) Quadratic-plateau
+  if (!is.null(qp_model)) {
+    CM_QPraw <- confusionMatrix(
+      factor(df_compare$classif_QPraw, levels = c(0,1)),
+      factor(df_compare$Binary_ref, levels = c(0,1))
+    )$table
 
-  ## b) Linear-plateau+ANOVA
+    res_CM_QPraw[i, ] <- c(
+      TPos = CM_QPraw[2,2],
+      TNeg = CM_QPraw[1,1],
+      FPos = CM_QPraw[2,1],
+      FNeg = CM_QPraw[1,2]
+    )
+  } else {
+    res_CM_QPraw[i, ] <- c(TPos = -1, TNeg = -1, FPos = -1, FNeg = -1)
+  }
+
+
+  # c) Linear-plateau+ANOVA
   if (!is.null(lp_model_aov)) {
     CM_RYANOVA <- confusionMatrix(
       factor(df_compare$classif_RYANOVA, levels = c(0,1)),
@@ -406,8 +516,25 @@ for (i in seq_len(n_sims)) {
   } else {
     res_CM_RYANOVA[i, ] <- c(TPos = -1, TNeg = -1, FPos = -1, FNeg = -1)
   }
+  
+  # d) Quadratic-plateau + ANOVA
+  if (!is.null(qp_model_aov)) {
+    CM_QPANOVA <- confusionMatrix(
+      factor(df_compare$classif_QPANOVA, levels = c(0,1)),
+      factor(df_compare$Binary_ref, levels = c(0,1))
+    )$table
 
-  # c) Logistic regression
+    res_CM_QPANOVA[i, ] <- c(
+      TPos = CM_QPANOVA[2,2],
+      TNeg = CM_QPANOVA[1,1],
+      FPos = CM_QPANOVA[2,1],
+      FNeg = CM_QPANOVA[1,2]
+    )
+  } else {
+    res_CM_QPANOVA[i, ] <- c(TPos = -1, TNeg = -1, FPos = -1, FNeg = -1)
+  }
+
+  # e) Logistic regression
   if (!is.null(log_fit)) {
     CM_logis <- confusionMatrix(
       factor(df_compare$classif_logis, levels = c(0,1)),
@@ -432,15 +559,19 @@ results_train <- bind_rows(results_list)
 # Convert matrices to data frames
 df_RYraw <- as.data.frame(res_CM_RYraw)
 df_RYANOVA <- as.data.frame(res_CM_RYANOVA)
+df_QPraw <- as.data.frame(res_CM_QPraw)
+df_QPANOVA <- as.data.frame(res_CM_QPANOVA)
 df_logis <- as.data.frame(res_CM_logis)
 
 # Add model labels
 df_RYraw$model <- "Linear-plateau"
 df_RYANOVA$model <- "Linear-plateau+ANOVA"
+df_QPraw$model <- "Quadratic-plateau"
+df_QPANOVA$model <- "Quadratic-plateau+ANOVA"
 df_logis$model <- "Logistic regression"
 
 # Combine all
-df_all <- bind_rows(df_RYraw, df_RYANOVA, df_logis)
+df_all <- bind_rows(df_RYraw, df_RYANOVA, df_QPraw, df_QPANOVA, df_logis)
 
 # Evaluation and methods comparison
 # Accuracy is defined as (TP + TN) / total, for iterations with valid results
@@ -452,9 +583,12 @@ df_all <- df_all %>%
 
 ##  Save simulation outputs
 ```{r, message=FALSE, warning=FALSE}
-sim_output <- list(CM_RY = res_CM_RYraw, 
-                CM_RYAOV = res_CM_RYANOVA, 
-                CM_logis = res_CM_logis)
+sim_output <- list(
+  CM_RY      = res_CM_RYraw,
+  CM_RYAOV   = res_CM_RYANOVA,
+  CM_QP      = res_CM_QPraw,
+  CM_QPAOV   = res_CM_QPANOVA,
+  CM_logis   = res_CM_logis)
 
 # Save RDS for simulations
 saveRDS(sim_output, "sim_test.rds")
@@ -463,7 +597,7 @@ sim <- readRDS("sim_test.rds")
 
 ## Read simulation outputs
 ```{r, message=FALSE, warning=FALSE, echo=FALSE}
-rds_dir <- "C:/Users/sofic/OneDrive - Kansas State University/Sofia Cominelli/PhD/Sofia_Cominelli/Projects/P_responsiveness/Code/simulations_oos"
+rds_dir <- "C:/Users/sofic/OneDrive - Kansas State University/Sofia Cominelli/PhD/Sofia_Cominelli/Projects/P_responsiveness/Code/simulations"
 ```
 
 ```{r, message=FALSE, warning=FALSE}
@@ -504,10 +638,16 @@ metrics <- function(cm, models_iter){
 # Process the simulation
 sim_proccess <- function(file, sim_id){
   sim <- readRDS(file)
-  df <- bind_rows(metrics(sim$CM_RY, "Linear-plateau"),
-                  metrics(sim$CM_RYAOV, "Linear-plateau+ANOVA"),
-                  metrics(sim$CM_logis, "Logistic regression")) %>%
+
+  df <- bind_rows(
+    metrics(sim$CM_RY,    "Linear-plateau"),
+    metrics(sim$CM_RYAOV, "Linear-plateau+ANOVA"),
+    metrics(sim$CM_QP,    "Quadratic-plateau"),
+    metrics(sim$CM_QPAOV, "Quadratic-plateau+ANOVA"),
+    metrics(sim$CM_logis, "Logistic regression")
+  ) %>%
     mutate(simulation = sim_id)
+
   return(df)
 }
 
@@ -542,12 +682,37 @@ df_metrics <- df_metrics %>%
 
 
 # Figures
-
-## Accuracy plot
+## Plots organization
 ```{r, message=FALSE, warning=FALSE}
-# Compute accuracy for each model, each scenario and each iteration in the scenario
-df_mean_sd <- df_metrics %>%
-  group_by(model, environments, p_rates) %>%
+# Model colors
+model_cols <- c(
+  "Logistic regression" = "#462456",
+  "Linear-plateau" = "#1E5631",
+  "Linear-plateau+ANOVA" = "#4C9A2A", 
+  "Quadratic-plateau" = "#8B5A2B",
+  "Quadratic-plateau+ANOVA" = "#E3A857")
+
+# Order models and create model rows
+df_metrics <- df_metrics %>%
+  mutate(model = factor(model, levels = c(
+      "Logistic regression",
+      "Linear-plateau",
+      "Linear-plateau+ANOVA",
+      "Quadratic-plateau",
+      "Quadratic-plateau+ANOVA")),
+    model_row = case_when(
+      model == "Logistic regression" ~ "1",
+      model %in% c("Linear-plateau", "Linear-plateau+ANOVA") ~ "2",
+      model %in% c("Quadratic-plateau", "Quadratic-plateau+ANOVA") ~ "3"),
+    model_row = factor(model_row, levels = c("1", "2", "3")))
+
+
+```
+
+```{r accuracy-plot, message=FALSE, warning=FALSE, fig.width=9, fig.height=10, out.width="100%", dpi=300}
+plt_ribbons_acc
+df_mean_sd_acc <- df_metrics %>%
+  group_by(model_row, model, environments, p_rates) %>%
   summarise(
     mean_acc = mean(accuracy, na.rm = TRUE),
     sd_acc   = sd(accuracy, na.rm = TRUE),
@@ -556,84 +721,95 @@ df_mean_sd <- df_metrics %>%
   mutate(
     ymin = pmax(0, mean_acc - sd_acc),
     ymax = pmin(1, mean_acc + sd_acc))
-```
 
-```{r, message=FALSE, warning=FALSE, echo=FALSE}
 
-plt_ribbons <- ggplot(df_mean_sd, aes(environments, mean_acc, color = model, fill = model)) +
+# Accuracy ggplot
+plt_ribbons_acc <- ggplot(df_mean_sd_acc, aes(environments, mean_acc, 
+                                              color = model, fill = model)) +
   geom_ribbon(aes(ymin = ymin, ymax = ymax), alpha = 0.15, colour = NA) +
   geom_line(linewidth = 1) +
   geom_point(size = 2, alpha = 0.5) +
-  facet_wrap(
-    ~ p_rates,
-    labeller = as_labeller(c(`4` = "4 P rates", `5` = "5 P rates", `7` = "7 P rates"))
-  ) +
+  ggh4x::facet_grid2(
+    model_row ~ p_rates,
+    axes = "x",
+    labeller = labeller(
+      p_rates = as_labeller(c(`4` = "4 P rates", `5` = "5 P rates", `7` = "7 P rates")),
+      model_row = as_labeller(c(`1` = "", `2` = "", `3` = "")))) +
   scale_x_continuous(
     breaks = c(10, 20, 30, 40, 60, 100),
-    labels = c(10, 20, 30, 40, 60, 100)
-  ) +
+    labels = c(10, 20, 30, 40, 60, 100)) +
   ylim(0, 1) + 
-  scale_fill_manual(values = c("Logistic regression"="#462456",
-                               "Linear-plateau"="#008544",
-                               "Linear-plateau+ANOVA"="#b79830")) +
-  scale_color_manual(values = c("Logistic regression"="#462456",
-                                "Linear-plateau"="#008544",
-                                "Linear-plateau+ANOVA"="#b79830")) +
-  labs(x = "Number of site-years", y = "Accuracy (mean \u00B1 SD)", color = "Model", fill = "Model") +
+  scale_fill_manual(values = model_cols) +
+  scale_color_manual(values = model_cols) +
+  labs(x = "Number of site-years", y = "Accuracy (mean ± SD)", 
+       color = "Models", fill = "Models") +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE),
+         fill = guide_legend(nrow = 2, byrow = TRUE)) +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top")
 
-plt_ribbons <- ggpar(
-  plt_ribbons,
+plt_ribbons_acc <- ggpar(
+  plt_ribbons_acc,
   ggtheme = theme_pubr(base_size = 14),
   legend  = "top",
   panel.grid = "y",
-  ticks   = TRUE
-)
+  ticks   = TRUE)
 
-plt_ribbons <- plt_ribbons +
+plt_ribbons_acc <- plt_ribbons_acc +
   theme(
     panel.border = element_blank(),
     strip.background = element_blank(),
-    panel.background = element_rect(fill = NA, colour = NA)
-  )
+    panel.background = element_rect(fill = NA, colour = NA),
+    strip.text = element_text(size = 11),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    panel.spacing = unit(0.8, "lines"))
 
-plt_ribbons
-
+plt_ribbons_acc
 ```
-**Figure 1.** Accuracy of the three classification methods across simulation scenarios. Panels correspond to scenarios with four, five, and seven fertilizer P rate levels. The x axis shows the number of site years in each scenario, and the y axis shows mean accuracy across 1,000 simulation iterations. Lines represent mean performance, and shaded bands represent one standard deviation across iterations. 
+
+**Figure 1.** Mean accuracy of five methods for classifying site-year P responsiveness across simulated experimental scenarios. Columns represent fertilizer design scenarios with 4,5, or 7 phosphorus rate and the x-axis represents the number of site-years. Point and lines represent the mean accuracy of 1,000 simulation iterations for each design scenario, and shaded bands represent ±1 standard deviation.
 
 ## Precision plot
+
 ```{r, message=FALSE, warning=FALSE}
-# Precision 
 df_mean_sd_prec <- df_metrics %>%
-  group_by(model, environments, p_rates) %>%
+  group_by(model_row, model, environments, p_rates) %>%
   summarise(
     mean_prec = mean(precision, na.rm = TRUE),
     sd_prec   = sd(precision, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  mutate(ymin = pmax(0, mean_prec - sd_prec),
+  mutate(
+    ymin = pmax(0, mean_prec - sd_prec),
     ymax = pmin(1, mean_prec + sd_prec))
-```
 
-```{r, message=FALSE, warning=FALSE, echo=FALSE}
 
-plt_ribbons_prec <- ggplot(df_mean_sd_prec, aes(environments, mean_prec, color = model, fill = model)) +
+# Precision ggplot
+
+plt_ribbons_prec <- ggplot(df_mean_sd_prec, aes(environments, mean_prec, 
+                                                color = model, fill = model)) +
   geom_ribbon(aes(ymin = ymin, ymax = ymax), alpha = 0.15, colour = NA) +
   geom_line(linewidth = 1) +
   geom_point(size = 2, alpha = 0.5) +
-  facet_wrap(~ p_rates,
-             labeller = as_labeller(c(`4` = "4 P rates", `5` = "5 P rates", `7` = "7 P rates"))) +
-  scale_x_continuous(breaks = c(10, 20, 30, 40, 60, 100), labels = c(10, 20, 30, 40, 60, 100)) +
+  ggh4x::facet_grid2(
+    model_row ~ p_rates,
+    axes = "x",
+    labeller = labeller(
+      p_rates = as_labeller(c(`4` = "4 P rates", `5` = "5 P rates", `7` = "7 P rates")),
+      model_row = as_labeller(c(`1` = "", `2` = "", `3` = "")))) +
+  scale_x_continuous(
+    breaks = c(10, 20, 30, 40, 60, 100),
+    labels = c(10, 20, 30, 40, 60, 100)) +
   ylim(0, 1) + 
-  scale_fill_manual(values = c("Logistic regression"="#462456",
-                               "Linear-plateau"="#008544",
-                               "Linear-plateau+ANOVA"="#b79830")) +
-  scale_color_manual(values = c("Logistic regression"="#462456",
-                                "Linear-plateau"="#008544",
-                                "Linear-plateau+ANOVA"="#b79830")) +
-  labs(x = "Number of site-years", y = "Precision (mean \u00B1 SD)", color = "Model", fill = "Model") +
+  scale_fill_manual(values = model_cols) +
+  scale_color_manual(values = model_cols) +
+  labs(x = "Number of site-years", y = "Precision (mean ± SD)", 
+       color = "Models", fill = "Models") +
+  guides(color = guide_legend(nrow = 2, byrow = TRUE),
+         fill = guide_legend(nrow = 2, byrow = TRUE)) +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top")
 
@@ -642,21 +818,24 @@ plt_ribbons_prec <- ggpar(
   ggtheme = theme_pubr(base_size = 14),
   legend  = "top",
   panel.grid = "y",
-  ticks   = TRUE
-)
+  ticks   = TRUE)
 
 plt_ribbons_prec <- plt_ribbons_prec +
   theme(
-    panel.border     = element_blank(),
+    panel.border = element_blank(),
     strip.background = element_blank(),
-    panel.background = element_rect(fill = NA, colour = NA)
-  )
+    panel.background = element_rect(fill = NA, colour = NA),
+    strip.text = element_text(size = 11),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    panel.spacing = unit(0.8, "lines"))
 
 plt_ribbons_prec
-
-
 ```
-**Figure 2.** Precision of the three classification methods across simulation scenarios. Panels correspond to scenarios with four, five, and seven fertilizer P rate levels. The x axis shows the number of site years in each scenario, and the y axis shows mean precision across 1,000 simulation iterations. Lines represent mean performance, and shaded bands represent one standard deviation across iterations. 
+
+**Figure 2.** Mean precision of five methods for classifying site-year P responsiveness across simulated experimental scenarios. Columns represent fertilizer design scenarios with 4,5, or 7 phosphorus rate and the x-axis represents the number of site-years. Point and lines represent the mean accuracy of 1,000 simulation iterations for each design scenario, and shaded bands represent ±1 standard deviation. 
 
 
 ## Logistic regression threshold comparison
@@ -755,22 +934,29 @@ ggsave("../Output/Paper/Figure_3.tiff", plot = plt_thres_acc, width = 7, height 
 **Figure 3.** Accuracy for the logistic regression model under different cutoff  for the classification. We compared four probability cutoff  (0.3, 0.4, 0.5, and 0.7) using simulations with 30 and 60 site-years, each with four P rates. Accuracy distributions are shown as violin plots summarizing 1,000 iterations per scenario. Classification accuracy remained similar for thresholds of 0.4 and 0.5.
 
 # Reproducibility notes
-This appendix documents the simulation and evaluation code used to generate the results summarized in the main manuscript. To reproduce the outputs, the user needs:
 
-- The parameter file used to define site-level simulation inputs.
+This appendix provides the code required to reproduce the simulation workflow and the figures summarized in the main manuscript. To reproduce the outputs, the following files are required:
 
-- The script in this appendix.
+1. The environment matrix file containing the site-year-level parameters used for simulation, including STP, intercept, slope, critical P fertilizer rate, and residual standard deviation.
 
-- An R project that contains the required input files and an output folder for saved objects and figures.
+2. The R Markdown script provided in this appendix.
 
-The simulation uses random sampling of site-years and stochastic error terms. Therefore, results are reproducible only when the random seed is fixed and the same package versions are used. The primary outputs produced by this script are:
+3. A project directory containing the input files and folders for storing simulation outputs, figures, and summary tables.
 
-a) Confusion matrix components for each method and iteration.
+The simulation includes stochastic components, including random sampling of site-years and random residual error added to simulated yield observations. Therefore, exact reproducibility requires setting the random seed and using the same input files, package versions, and scenario definitions. The script records model failures by assigning negative confusion matrix values for failed fits. During metric calculation, failed iterations should be coded as missing values rather than zero to avoid treating model failures as poor but valid classification performance.
 
-b) Performance metrics including accuracy, precision, sensitivity, and specificity.
+The primary outputs generated by this appendix are:
 
-c) Summary plots across scenarios.
+1. RDS files containing confusion matrix components for each method and simulation iteration.
 
+2. A table of training parameter estimates, including CSTV estimates for plateau-based methods and coefficients for logistic regression.
 
-If any model fit fails in an iteration, the script records that iteration accordingly and excludes it from performance summaries as specified in the code comments.
+3. Classification performance metrics, including accuracy, precision, sensitivity, and specificity.
+
+4. Summary figures showing mean accuracy and precision across simulation scenarios.
+
+5. A CSV table summarizing mean classification performance by method, number of site-years, and number of P fertilizer rates.
+
+For transparency, the appendix includes details that were intentionally summarized in the main manuscript, including the simulation file structure, model failure handling, metric calculation, and plotting workflow.
+
 
