@@ -19,22 +19,23 @@ header-includes: |
 ---
 
 ```{r setup, include=FALSE}
-# Global chunk options for this R Markdown document
-# echo = TRUE prints code in the rendered output, which is useful for an appendix style document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Introduction
 
-This appendix documents the code and workflow used for the simulation study described in the main manuscript. The objective of the simulation study was to evaluate and compare the out-of-sample classification performance of five statistical methods for characterizing phosphorus (P) responsiveness from soil test phosphorus (STP): i) linear-plateau, ii) linear-plateau with ANOVA-based relative yield adjustment, iii) quadratic-plateau, iv) quadratic-plateau with ANOVA-based relative yield adjustment, and v) logistic regression.
+This appendix documents the code and workflow used for the simulation study described in the main manuscript. The objective of the simulation study was to evaluate and compare the out-of-sample prediction performance of five statistical methods for characterizing phosphorus (P) responsiveness from soil test phosphorus (STP): i) linear-plateau, ii) linear-plateau with ANOVA-based relative yield adjustment, iii) quadratic-plateau, iv) quadratic-plateau with ANOVA-based relative yield adjustment, and v) logistic regression.
 
-The simulation workflow was organized into three major steps: data simulation, model fitting, and evaluation. In the data simulation step, synthetic wheat yield observations were generated from an empirically informed environment matrix derived from historical Kansas wheat P fertilization trials. In the model fitting step, the five candidate methods were fitted using the training portion of each simulated dataset. In the evaluation step, predicted classifications from each fitted method were compared with an AIC-based reference responsiveness classification in the testing data.
+The simulation workflow was organized into three major steps: data simulation, model fitting, and evaluation. In the data simulation step, synthetic wheat yield observations were generated from realistic references, a Kansas wheat trials evaluating P fertilization dataset. In the model fitting step, the five candidate methods were fitted using the training portion of each simulated dataset. In the evaluation step, predicted responsiveness from each fitted method was compared with a slope-based reference responsiveness label in the testing data.
 
-The reference responsiveness classification was determined within each simulated dataset by comparing an intercept-only model with a slope-intercept model for each simulated site-year. The intercept-only model represented no yield response to P fertilizer rate, whereas the slope-intercept model represented yield change as a function of P fertilizer rate. The slope-intercept model was considered to provide better support for responsiveness when it improved AIC relative to the intercept-only model by more than the selected delta AIC criterion. This binary reference classification was used only for simulation evaluation and provided the known benchmark against which candidate methods were compared.
+The reference “true response” label was defined from the simulated site-year slope parameter. Site-years with a slope greater than 0.05 were labeled as “true responsive”, whereas site-years with a slope less than or equal to 0.05 were labeled as “true non-responsive”. This slope-based label served as the known evaluation benchmark because it was derived directly from the data-generating process used in the simulation.
+
+For the logistic regression method, binary labels used for model fitting were generated separately in the training data using an AIC-based comparison between an intercept-only model and a slope-intercept model of yield as a function of P fertilizer rate. Thus, the AIC-based label was used to train the logistic regression, whereas the slope-based label was used as the reference benchmark for out-of-sample evaluation in the testing data.
+
 
 For each simulation iteration, the script:
 
-1. Samples site-years from the empirical environment matrix.
+1. Samples site-years from the realistic reference, a Kansas wheat trials evaluating P fertilization dataset.
 
 2. Generates synthetic yield observations across P fertilizer rates and replicates.
 
@@ -50,7 +51,7 @@ For each simulation iteration, the script:
 
 5. Applies the fitted methods to testing site-years.
 
-6. Compares predicted classifications with the AIC-based reference classification.
+6. Compares predicted responsiveness with the slope-based reference “true response” label in the testing data.
 
 7. Stores confusion matrix components for each method and simulation iteration.
 
@@ -97,7 +98,7 @@ The file environments_for_simulations_lp.csv contains environment-level paramete
 We assumed that these parameter values are representative of plausible site-year response behavior and that residuals are independent and normally distributed with standard deviation `sd`.
 
 ```{r, message=FALSE, warning=FALSE, echo=FALSE}
-# “Gold standards”, based on real data
+# Reference dataset
 env_matrix <- read.csv("environments_for_simulations_lp.csv")
 #env_matrix %>% 
   #ggplot(aes(STP, inter))+
@@ -164,6 +165,11 @@ n_rep <- 3
 
 # Set the probability threshold for logistic regression classification
 logit_thresh <- 0.4
+
+# Slope criterion used to define the reference responsiveness label
+# Responsive = 1 when the simulated site-year slope is greater than 0.05
+# Non-responsive = 0 when the simulated site-year slope is less than or equal to 0.05
+slope_thresh <- 0.05
 
 ```
 
@@ -255,7 +261,7 @@ for (i in seq_len(n_sims)) {
   # TRAINING PHASE 
   
   # a) Linear-plateau
-  # # RY (relative yield) = (control yield at Pfert = 0) / 
+  # RY (relative yield) = (control yield at Pfert = 0) / 
   # (maximum mean yield across Pfert levels) * 100
   df_max <- train_data %>%
     group_by(env_ID, Pfert, STP) %>%
@@ -403,31 +409,17 @@ for (i in seq_len(n_sims)) {
   
   # TESTING PHASE
   
-  # Create reference label in the testing data using delta AIC
-  # Note:
-  # Reference responsiveness classification based on AIC
-  # For each simulated site-year, two models are compared:
-  #   1) Intercept-only model: yield does not change with P fertilizer rate
-  #   2) Slope-intercept model: yield changes with P fertilizer rate
+  # Create the “true response” label in the testing data using the slope criterion
+  # Responsive = 1 when the simulated site-year slope is greater than slope_thresh
+  # Non-responsive = 0 when the simulated site-year slope is less than or equal to slope_thresh
+  # This slope-based label is used as the evaluation benchmark for all methods
+  df_ref_test <- test_data %>%
+  distinct(env_ID, STP, slope) %>%
+  mutate(Binary = ifelse(slope > slope_thresh, 1L, 0L)) %>%
+  select(env_ID, STP, Binary)
 
-  # A lower AIC indicates better model fit.
-  # If the slope-intercept model reduces AIC by more than delta_aic_threshold units (3 units),
-  # the site-year is classified as responsive.
-  # Otherwise, it is classified as non-responsive.
-  
-  df_AIC_test <- test_data %>%
-    group_by(env_ID, STP) %>%
-    nest() %>%
-    mutate(m0 = map(data, ~ lm(y ~ 1, data = .x)),
-      m1 = map(data, ~ lm(y ~ Pfert, data = .x)),
-      AIC_int   = map_dbl(m0, AIC),
-      AIC_slope = map_dbl(m1, AIC),
-      delta_AIC = AIC_int - AIC_slope,
-      Binary    = ifelse(delta_AIC > 3, 1L, 0L)) %>%
-    select(env_ID, Binary)
-  
-  test_data <- test_data %>% distinct(env_ID, STP)
-
+test_data <- df_ref_test %>%
+  select(env_ID, STP)
   # Predictions on the testing set
   
   # a) Linear-plateau classification based on CSTV from training
@@ -450,7 +442,7 @@ for (i in seq_len(n_sims)) {
     mutate(classif_QPANOVA = ifelse(STP < CSTV_qp_aov, 1, 0)) %>%
     select(env_ID, classif_QPANOVA)
 
-  # c) Logistic regression classification using fitted model from training
+  # e) Logistic regression classification using fitted model from training
   classif_logis <- {
     if (is.null(log_fit)) {
       test_data %>% mutate(classif_logis = 0) %>% select(env_ID, classif_logis)
@@ -460,14 +452,13 @@ for (i in seq_len(n_sims)) {
         select(env_ID, classif_logis)}}
   
   # Combine reference labels and predictions for evaluation
-  df_compare <- df_AIC_test %>%
-    left_join(classif_RYraw,   by = "env_ID") %>%
-    left_join(classif_RYANOVA, by = "env_ID") %>%
-    left_join(classif_QPraw,   by = "env_ID") %>%
-    left_join(classif_QPANOVA, by = "env_ID") %>%
-    left_join(classif_logis,   by = "env_ID") %>%
-    rename(Binary_ref = Binary)
-  
+  df_compare <- df_ref_test %>%
+  select(env_ID, Binary_ref = Binary) %>%
+  left_join(classif_RYraw,   by = "env_ID") %>%
+  left_join(classif_RYANOVA, by = "env_ID") %>%
+  left_join(classif_QPraw,   by = "env_ID") %>%
+  left_join(classif_QPANOVA, by = "env_ID") %>%
+  left_join(classif_logis,   by = "env_ID")
   
   # Model fitting and classification of sites
   # Confusion matrix
@@ -573,12 +564,6 @@ df_logis$model <- "Logistic regression"
 # Combine all
 df_all <- bind_rows(df_RYraw, df_RYANOVA, df_QPraw, df_QPANOVA, df_logis)
 
-# Evaluation and methods comparison
-# Accuracy is defined as (TP + TN) / total, for iterations with valid results
-# Note: -1 values indicate failed fits for that iteration
-df_all <- df_all %>%
-  mutate(accuracy = (TPos + TNeg) / (TPos + TNeg + FPos + FNeg))
-
 ```
 
 ##  Save simulation outputs
@@ -612,6 +597,7 @@ sim_list <- purrr::map(rds_files, readRDS)
 names(sim_list) <- basename(rds_files)
 
 ```
+
 ## Compute performance metrics
 ```{r, message=FALSE, warning=FALSE}
 # Evaluation and methods comparison
@@ -628,8 +614,6 @@ metrics <- function(cm, models_iter){
     dplyr::mutate(
       iter = dplyr::row_number(),
       accuracy    = ifelse(failed, 0, (TPos + TNeg) / total),
-      sensitivity = ifelse(failed, 0, ifelse((TPos + FNeg) > 0, TPos / (TPos + FNeg), NA_real_)),
-      specificity = ifelse(failed, 0, ifelse((TNeg + FPos) > 0, TNeg / (TNeg + FPos), NA_real_)),
       precision   = ifelse(failed, 0, ifelse((TPos + FPos) > 0, TPos / (TPos + FPos), NA_real_)),
       model       = models_iter
     )
@@ -709,8 +693,8 @@ df_metrics <- df_metrics %>%
 
 ```
 
-```{r accuracy-plot, message=FALSE, warning=FALSE, fig.width=9, fig.height=10, out.width="100%", dpi=300}
-plt_ribbons_acc
+```{r, message=FALSE, warning=FALSE}
+
 df_mean_sd_acc <- df_metrics %>%
   group_by(model_row, model, environments, p_rates) %>%
   summarise(
@@ -741,7 +725,7 @@ plt_ribbons_acc <- ggplot(df_mean_sd_acc, aes(environments, mean_acc,
   ylim(0, 1) + 
   scale_fill_manual(values = model_cols) +
   scale_color_manual(values = model_cols) +
-  labs(x = "Number of site-years", y = "Accuracy (mean ± SD)", 
+  labs(x = "Number of site-years", y = "Accuracy (mean +/- SD)", 
        color = "Models", fill = "Models") +
   guides(color = guide_legend(nrow = 2, byrow = TRUE),
          fill = guide_legend(nrow = 2, byrow = TRUE)) +
@@ -788,7 +772,6 @@ df_mean_sd_prec <- df_metrics %>%
 
 
 # Precision ggplot
-
 plt_ribbons_prec <- ggplot(df_mean_sd_prec, aes(environments, mean_prec, 
                                                 color = model, fill = model)) +
   geom_ribbon(aes(ymin = ymin, ymax = ymax), alpha = 0.15, colour = NA) +
@@ -806,7 +789,7 @@ plt_ribbons_prec <- ggplot(df_mean_sd_prec, aes(environments, mean_prec,
   ylim(0, 1) + 
   scale_fill_manual(values = model_cols) +
   scale_color_manual(values = model_cols) +
-  labs(x = "Number of site-years", y = "Precision (mean ± SD)", 
+  labs(x = "Number of site-years", y = "Precision (mean +/- SD)", 
        color = "Models", fill = "Models") +
   guides(color = guide_legend(nrow = 2, byrow = TRUE),
          fill = guide_legend(nrow = 2, byrow = TRUE)) +
@@ -843,55 +826,87 @@ Because logistic regression estimates predicted probabilities, classification re
 
 
 ```{r, message=FALSE, warning=FALSE, include=FALSE}
-# Read simulation files for the threshold
-rds_dir <- "C:/Users/sofic/OneDrive - Kansas State University/Sofia Cominelli/PhD/Sofia_Cominelli/Projects/P_responsiveness/Code/simulations_oos"
+# Logistic regression probability-threshold analysis
+# This section combines the standard simulations using p = 0.4
+# with additional simulations using alternative probability cutoffs.
+
+# Directory containing simulation outputs
+rds_dir <- "C:/Users/sofic/OneDrive - Kansas State University/Sofia Cominelli/PhD/Sofia_Cominelli/Projects/P_responsiveness/Code/simulations"
 
 ```
 
 
 ```{r, message=FALSE, warning=FALSE}
-# Read files
-rds_thresh <- list.files(path = rds_dir, pattern = "^sim_\\d{2}_\\d+\\.rds$",full.names = TRUE)
+# Standard simulations corresponding to the original logistic cutoff p = 0.4
+rds_files_std <- list.files(
+  path = rds_dir,
+  pattern = "^sim_[0-9]+\\.rds$",
+  full.names = TRUE)
 
-# Metadata derived from filename
-metadata_all <- tibble(file = basename(rds_thresh)) %>%
-  mutate(
-    th_code = stringr::str_match(file, "^sim_(\\d{2})_(\\d+)\\.rds$")[, 2],
-    n_code  = stringr::str_match(file, "^sim_(\\d{2})_(\\d+)\\.rds$")[, 3],
-    p_threshold = as.numeric(th_code) / 10,
-    n_env = as.integer(n_code),
-    facet_group = factor(sprintf("%.1f", p_threshold),
-                         levels = c("0.3","0.4","0.5","0.7")))
+rds_files_std <- rds_files_std[
+  basename(rds_files_std) %in% c("sim_2.rds", "sim_5.rds")]
 
-# Compute accuracy
-metrics <- function(cm, models_iter) {
-  cm <- tibble::as_tibble(cm)
-  stopifnot(all(c("TPos","TNeg","FPos","FNeg") %in% names(cm)))
-  cm <- dplyr::mutate(cm, dplyr::across(c(TPos,TNeg,FPos,FNeg), as.numeric))
+# Additional simulations using alternative logistic probability cutoffs
+# We tested cutoff probability of 0.3, 0.5, 0.7
+rds_files_thres <- list.files(
+  path = rds_dir,
+  pattern = "^sim_log_thres_\\d+\\.rds$",
+  full.names = TRUE)
 
+rds_files_thres <- rds_files_thres[
+  order(as.numeric(gsub("sim_log_thres_|\\.rds", "", basename(rds_files_thres))))]
+
+# Combine standard and threshold-specific simulations
+rds_files_all <- c(rds_files_std, rds_files_thres)
+
+# Metadata for each simulation file
+# The order must match the order of rds_files_all
+metadata_all <- tibble(
+  file = basename(rds_files_all),
+  n_env = c(30, 60, 30, 60, 30, 60, 30, 60),
+  p_threshold = c(0.4, 0.4, 0.3, 0.3, 0.5, 0.5, 0.7, 0.7))
+
+# Check that each RDS file has corresponding metadata
+stopifnot(length(rds_files_all) == nrow(metadata_all))
+
+# Function to compute performance metrics from a confusion matrix
+metrics_accuracy <- function(cm, model_name) {
+  
+  cm <- tibble::as_tibble(cm) %>%
+    mutate(across(c(TPos, TNeg, FPos, FNeg), as.numeric))
+  
   failed <- cm$TPos < 0
   total  <- cm$TPos + cm$TNeg + cm$FPos + cm$FNeg
-
+  
   cm %>%
-    dplyr::mutate(
-      iter = dplyr::row_number(),
-      accuracy= ifelse(failed, 0, (TPos + TNeg) / total),
-      model= models_iter)}
+    mutate(
+      iter = row_number(),
+      accuracy = ifelse(failed, NA_real_, (TPos + TNeg) / total),
+      model = model_name
+    )
+}
 
-# Create a metadata
+# Function to process one simulation file
 sim_process <- function(file, sim_id) {
+  
   sim <- readRDS(file)
-
-  out <- metrics(sim$CM_logis, "Logistic regression") %>%
-    dplyr::mutate(
+  
+  metrics(sim$CM_logis, "Logistic regression") %>%
+    mutate(
       simulation = sim_id,
       file = basename(file)
     )
-  out
 }
 
-df_log <- purrr::map2_dfr(rds_thresh, seq_along(rds_thresh), sim_process) %>%
-  dplyr::left_join(metadata_all, by = "file")
+# Read all simulation files and join scenario metadata
+df_log <- map2_dfr(rds_files_all, seq_along(rds_files_all), sim_process) %>%
+  left_join(metadata_all, by = "file") %>%
+  mutate(
+    facet_group = factor(
+      sprintf("%.1f", p_threshold),
+      levels = c("0.3", "0.4", "0.5", "0.7")
+    )
+  )
 ```
 
 
@@ -901,7 +916,7 @@ df_log <- purrr::map2_dfr(rds_thresh, seq_along(rds_thresh), sim_process) %>%
 pos_dodge <- position_dodge(width = 0.7)
 
 plt_thres_acc <- ggplot(df_log, aes(x = factor(n_env), y = accuracy, fill = model)) +
-  geom_half_violin(bw = 0.1, side = "l", position = pos_dodge, alpha = 0.5, width = 1.1) +
+  geom_half_violin(bw = 0.1, side = "l", position = pos_dodge, alpha = 0.4, width = 1.1) +
   geom_boxplot(width = 0.2, outlier.shape = NA, position = pos_dodge, color = "black", show.legend = FALSE) +
   scale_fill_manual(values = c("Logistic regression" = "#462456")) +
   scale_color_manual(values = c("Logistic regression" = "#462456"), guide = "none") +
@@ -922,16 +937,13 @@ plt_thres_acc <- ggpar(plt_thres_acc,ggtheme = theme_pubr(base_size = 10), legen
 
 plt_thres_acc <- plt_thres_acc +
   theme(strip.background = element_blank(),
-    strip.text = element_text(size = 12)
-    # If you also see borders around panels, add: panel.border = element_blank()
-  )
+    strip.text = element_text(size = 12))
 
-# Show once (optional)
+
 print(plt_thres_acc)
-ggsave("../Output/Paper/Figure_3.tiff", plot = plt_thres_acc, width = 7, height = 4, dpi = 500, bg = "white")
 ```
 
-**Figure 3.** Accuracy for the logistic regression model under different cutoff  for the classification. We compared four probability cutoff  (0.3, 0.4, 0.5, and 0.7) using simulations with 30 and 60 site-years, each with four P rates. Accuracy distributions are shown as violin plots summarizing 1,000 iterations per scenario. Classification accuracy remained similar for thresholds of 0.4 and 0.5.
+**Figure 3.** Accuracy for the logistic regression model under different cutoff for the classification. We compared four probability cutoff  (0.3, 0.4, 0.5, and 0.7) using simulations with 30 and 60 site-years, each with four P rates. Accuracy distributions are shown as violin plots summarizing 1,000 iterations per scenario. Classification accuracy remained similar for thresholds of 0.4 and 0.5. 
 
 # Reproducibility notes
 
